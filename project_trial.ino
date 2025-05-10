@@ -7,6 +7,8 @@
 #define VRy A1  // Y-axis of the joystick
 #define BUTTON 2
 
+#define NO_UNDOS 3
+
 // Thresholds for detecting movement
 #define DEADZONE 100  // Adjust this value to control sensitivity
 
@@ -53,7 +55,7 @@ TS_Point start, end;
 #define GRID_LEN 4
 
 uint32_t score = 0;
-uint32_t last_score = 0;
+uint32_t last_score[NO_UNDOS] = {0, 0, 0};
 bool undo = false;
 bool has_won = false;
 bool win_screen = false;
@@ -116,7 +118,7 @@ Grid::Grid() {
   max_val = grid[x][y];
 }
 
-Grid grid, last_grid;
+Grid grid, last_grids[NO_UNDOS];
 
 uint16_t getColor(uint32_t value) {
   uint32_t comp = 2;
@@ -157,7 +159,7 @@ void Grid::draw() {
   for (int i = 0; i < GRID_LEN; i++) {
     for (int j = 0; j < GRID_LEN; j++) {
 
-      if (undo or grid[i][j] != last_grid.grid[i][j]) {
+      if (undo or grid[i][j] != last_grids[NO_UNDOS - 1].grid[i][j]) {
         tft.fillRect(x_curs, y_curs, SQUARE_SIZE, SQUARE_SIZE, ILI9341_BLACK);
       }
       
@@ -210,11 +212,27 @@ void setup() {
 }
 
 void handleUndo() {
-  score = last_score;
-  grid = last_grid;
+  score = last_score[NO_UNDOS - 1];
+  grid = last_grids[NO_UNDOS - 1];
+
+  for (int i = NO_UNDOS - 1; i >= 1; i--) {
+    last_score[i] = last_score[i - 1];
+    last_grids[i] = last_grids[i - 1];
+  }  
+
   undo = true;
   grid.draw();
   undo = false;
+}
+
+void saveState() {
+  for (int i = 0; i < NO_UNDOS - 1; i++) {
+    last_grids[i] = last_grids[i + 1];
+    last_score[i] = last_score[i + 1];
+  }
+
+  last_grids[NO_UNDOS - 1] = grid;
+  last_score[NO_UNDOS - 1] = score;
 }
 
 void loop() {
@@ -266,8 +284,7 @@ void loop() {
   }
 
   if (abs(xValue - 512) > DEADZONE or abs(yValue - 512) > DEADZONE) {
-    last_grid = grid;
-    last_score = score;
+    saveState();
 
     // Left / Right detection
     if (xValue < 512 - DEADZONE) {
@@ -537,7 +554,10 @@ void handleSwipe(TS_Point s, TS_Point e) {
 
       score = 0;
       grid = Grid();
-      last_grid = grid;
+      for (int i = 0; i < NO_UNDOS; i++) {
+        last_score[i] = 0;
+        last_grids[i] = Grid();
+      }
       win_screen = false;
       initialize();
       delay(300);
@@ -552,8 +572,7 @@ void handleSwipe(TS_Point s, TS_Point e) {
 
   if (abs(dx) > abs(dy)) {
     if (abs(dx) > threshold) {
-      last_score = score;
-      last_grid = grid;
+      saveState();
 
       if (dx > 0) {
         grid.swipeRight();
@@ -563,8 +582,13 @@ void handleSwipe(TS_Point s, TS_Point e) {
     }
   } else {
     if (abs(dy) > threshold) {
-      last_score = score;
-      last_grid = grid;
+      for (int i = 0; i < NO_UNDOS - 1; i++) {
+        last_grids[i] = last_grids[i + 1];
+        last_score[i] = last_score[i + 1];
+      }
+
+      last_grids[NO_UNDOS - 1] = grid;
+      last_score[NO_UNDOS - 1] = score;
 
       if (dy > 0) {
         grid.swipeDown();
