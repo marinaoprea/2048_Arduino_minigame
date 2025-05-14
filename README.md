@@ -30,12 +30,12 @@ Any functionality of the game will be implemented both ways, either by interpret
 
 Components will be connected as shown in the block diagram:
 
-<img src="./images/pm_block_scheme.png" style="height 400px; width: 780px;"/>
+<img src="pm_block_scheme.png" style="height 400px; width: 780px;"/>
 
 ## Hardware Design
 
 ### Electrical Scheme
-<img src="./images/circuit_image.png" style="height 400px; width: 780px;"/>
+<img src="circuit_image.png" style="height 400px; width: 780px;"/>
 
 The screen uses 3.3V for logical high while Arduino UNO uses 5V as pin output. Voltage dividers were added to prevent screen damage.
 
