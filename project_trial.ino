@@ -2,6 +2,7 @@
 #include <Adafruit_ILI9341.h>
 #include <XPT2046_Touchscreen.h>
 #include <avr/sleep.h>
+#include <EEPROM.h>
 
 #define VRx A0  // X-axis of the joystick
 #define VRy A1  // Y-axis of the joystick
@@ -39,8 +40,8 @@ XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
 #define BUTTON_W 50
 #define BUTTON_H 30
 
-#define RETRY_X 160
-#define RETRY_Y 120
+#define RETRY_X 120
+#define RETRY_Y 160
 #define RETRY_W 65
 #define RETRY_H 25
 
@@ -59,17 +60,22 @@ uint32_t last_score[NO_UNDOS] = {0, 0, 0};
 bool undo = false;
 bool has_won = false;
 bool win_screen = false;
+bool is_playing = false;
+bool start_screen = false;
+bool you_lost = false;
+bool lose_screen = false;
+uint32_t best_score = 0;
 
 uint16_t colors[12] = {
-  0, 
-  ILI9341_WHITE, // 2
-  ILI9341_LIGHTGREY, // 4
+  ILI9341_BLACK, 
+  ILI9341_LIGHTGREY, // 2
+  ILI9341_PINK, // 4
   ILI9341_CYAN, // 8
   ILI9341_GREENYELLOW, // 16
   ILI9341_ORANGE, // 32
   ILI9341_RED, // 64
   ILI9341_PURPLE, // 128
-  ILI9341_PINK, // 256
+  ILI9341_NAVY, // 256
   ILI9341_MAGENTA, // 512
   ILI9341_YELLOW, // 1024
   ILI9341_OLIVE // 2048
@@ -86,6 +92,15 @@ class Grid {
       for (int i = 0; i < GRID_LEN; i++)
         for (int j = 0; j < GRID_LEN; j++)
           grid[i][j] = otherGrid.grid[i][j];
+      max_val = otherGrid.max_val;
+    }
+
+    bool operator==(const Grid &otherGrid) {
+      for (int i = 0; i < GRID_LEN; i++)
+        for (int j = 0; j < GRID_LEN; j++)
+          if (grid[i][j] != otherGrid.grid[i][j])
+            return false;
+      return true;
     }
 
     void draw();
@@ -100,7 +115,7 @@ class Grid {
 };
 
 Grid::Grid() {
-  randomSeed(analogRead(A0));
+  randomSeed(analogRead(A5));
 
   for (int i = 0; i < GRID_LEN; i++)
     for (int j = 0; j < GRID_LEN; j++)
@@ -135,7 +150,7 @@ void Grid::drawCenteredTextInBox(int rectX, int rectY, uint32_t value) {
   tft.setTextSize(2);
   
   uint16_t color = getColor(value);
-  tft.setTextColor(color);
+  tft.setTextColor(ILI9341_WHITE);
 
   int16_t x1, y1;
   uint16_t wText, hText;
@@ -160,7 +175,7 @@ void Grid::draw() {
     for (int j = 0; j < GRID_LEN; j++) {
 
       if (undo or grid[i][j] != last_grids[NO_UNDOS - 1].grid[i][j]) {
-        tft.fillRect(x_curs, y_curs, SQUARE_SIZE, SQUARE_SIZE, ILI9341_BLACK);
+        tft.fillRect(x_curs, y_curs, SQUARE_SIZE, SQUARE_SIZE, getColor(grid[i][j]));
       }
       
       tft.drawRect(x_curs, y_curs, SQUARE_SIZE, SQUARE_SIZE, ILI9341_WHITE);
@@ -183,20 +198,41 @@ void Grid::draw() {
   tft.setTextSize(2);
   tft.print("Score: ");
   tft.print(score);
+
+  tft.fillRect(150, 8, 150, 15, ILI9341_BLACK);
+  tft.setCursor(150, 8);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setTextSize(2);
+  tft.print("Best: ");
+  tft.print(best_score);
 }
 
-void initialize() {
-  tft.fillScreen(ILI9341_BLACK);
-
-  grid.draw();
-
+void display_undo_button() {
   tft.drawRect(250, 120, 50, 30, ILI9341_WHITE);
   tft.setCursor(253, 127);
   tft.setTextSize(2);
   tft.print("Undo");
 }
 
+void initialize() {
+  tft.fillScreen(ILI9341_BLACK);
+  grid = Grid();
+  for (int i = 0; i < NO_UNDOS; i++) {
+    last_score[i] = 0;
+    last_grids[i] = Grid();
+  }
+
+  grid.draw();
+
+  score = 0;
+
+  display_undo_button();
+}
+
 void setup() {
+  EEPROM.get(0, best_score);
+
+  grid = Grid();
   // put your setup code here, to run once:
   Serial.begin(9600);
 
@@ -207,8 +243,6 @@ void setup() {
 
   tft.setRotation(3);
   ts.setRotation(3);
-
-  initialize();
 }
 
 void handleUndo() {
@@ -221,6 +255,7 @@ void handleUndo() {
   }  
 
   undo = true;
+  tft.fillScreen(ILI9341_BLACK);
   grid.draw();
   undo = false;
 }
@@ -235,55 +270,171 @@ void saveState() {
   last_score[NO_UNDOS - 1] = score;
 }
 
+void save_best_score() {
+  best_score = max(best_score, score);
+  for (int i = 0; i < 4; i++) {
+    EEPROM.update(i, (best_score >> (i << 3)) & 0xFF);
+  }
+}
+
+void display_lose_screen() {
+  tft.fillScreen(ILI9341_BLACK);
+
+  tft.setTextSize(3);
+  tft.setTextColor(ILI9341_WHITE);
+
+  int16_t x1, y1;
+  uint16_t wText, hText, wText2, hText2;
+  char message_start[20];
+  char message_score[20];
+  sprintf(message_start, "You lost!");
+  sprintf(message_score, "Score: %u", score);
+
+  tft.getTextBounds(message_start, 0, 0, &x1, &y1, &wText, &hText);
+  tft.getTextBounds(message_score, 0, 0, &x1, &y1, &wText2, &hText2);
+
+  int textX = (SCREEN_WIDTH - wText) / 2;
+  int textY = (SCREEN_HEIGHT - hText2 - hText) / 2;
+
+  tft.setCursor(textX, textY);
+  tft.print(message_start);
+
+  int textX2 = (SCREEN_WIDTH - wText2) / 2;
+  int textY2 =  textY + hText2 + 2;
+
+  tft.setCursor(textX2, textY2);
+  tft.print(message_score);
+
+  tft.drawRect(120, 160, 65, 25, ILI9341_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(123, 164);
+  tft.print("Undo");
+}
+
+void display_start_screen() {
+  tft.fillScreen(ILI9341_BLACK);
+
+  tft.setTextSize(3);
+  tft.setTextColor(ILI9341_WHITE);
+
+  int16_t x1, y1;
+  uint16_t wText, hText, wText2, hText2;
+  char message_start[20];
+  char message_score[20];
+  sprintf(message_start, "START PLAYING!");
+  sprintf(message_score, "Best: %u", best_score);
+
+  tft.getTextBounds(message_start, 0, 0, &x1, &y1, &wText, &hText);
+  tft.getTextBounds(message_score, 0, 0, &x1, &y1, &wText2, &hText2);
+
+  int textX = (SCREEN_WIDTH - wText) / 2;
+  int textY = (SCREEN_HEIGHT - hText2 - hText) / 2;
+
+  tft.setCursor(textX, textY);
+  tft.print(message_start);
+
+  int textX2 = (SCREEN_WIDTH - wText2) / 2;
+  int textY2 =  textY + hText2 + 2;
+
+  tft.setCursor(textX2, textY2);
+  tft.print(message_score);
+
+  tft.drawRect(120, 160, 65, 25, ILI9341_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(123, 164);
+  tft.print("Play");
+}
+
+void display_win_screen() {
+  tft.fillScreen(ILI9341_BLACK);
+
+  tft.setTextSize(4);
+  tft.setTextColor(ILI9341_WHITE);
+
+  int16_t x1, y1;
+  uint16_t wText, hText, wText2, hText2;
+  char message_win[10];
+  char message_score[10];
+  sprintf(message_win, "YOU WON!");
+  sprintf(message_score, "Score: %u", score);
+
+  tft.getTextBounds(message_win, 0, 0, &x1, &y1, &wText, &hText);
+  tft.getTextBounds(message_score, 0, 0, &x1, &y1, &wText2, &hText2);
+
+  int textX = (SCREEN_WIDTH - wText) / 2;
+  int textY = (SCREEN_HEIGHT - hText2 - hText) / 2;
+
+  tft.setCursor(textX, textY);
+  tft.print(message_win);
+
+  int textX2 = (SCREEN_WIDTH - wText2) / 2;
+  int textY2 =  textY + hText2 + 2;
+
+  tft.setCursor(textX2, textY2);
+  tft.print(message_score);
+
+  tft.drawRect(120, 160, 65, 25, ILI9341_WHITE);
+  tft.setTextSize(2);
+  tft.setCursor(123, 164);
+  tft.print("Retry");
+}
+
 void loop() {
-  /*if (has_won) {
-    win_screen = true;
-    has_won = false;
+  // Serial.println(has_won);
 
-    tft.fillScreen(ILI9341_BLACK);
+  if (you_lost == true and lose_screen == false) {
+    save_best_score();
+    display_lose_screen();
+    lose_screen = true;
+  }
 
-    tft.setTextSize(4);
-    tft.setTextColor(ILI9341_WHITE);
+  if (start_screen == false and is_playing == false) {
+    display_start_screen();
+    start_screen = true;
+  }
+  else 
+    if (has_won == true and win_screen == false) {
+      win_screen = true;
+      has_won = false;
 
-    int16_t x1, y1;
-    uint16_t wText, hText, wText2, hText2;
-    char message_win[10];
-    char message_score[10];
-    sprintf(message_win, "YOU WON!");
-    sprintf(message_score, "Score: %u", score);
-
-    tft.getTextBounds(message_win, 0, 0, &x1, &y1, &wText, &hText);
-    tft.getTextBounds(message_score, 0, 0, &x1, &y1, &wText2, &hText2);
-
-    int textX = (SCREEN_WIDTH - wText) / 2;
-    int textY = (SCREEN_HEIGHT - hText2 - hText) / 2;
-
-    tft.setCursor(textX, textY);
-    tft.print(message_win);
-
-    int textX2 = (SCREEN_WIDTH - wText2) / 2;
-    int textY2 =  textY + hText2 + 2;
-
-    tft.setCursor(textX2, textY2);
-    tft.print(message_score);
-
-    tft.drawRect(120, 160, 65, 25, ILI9341_WHITE);
-    tft.setTextSize(2);
-    tft.setCursor(123, 164);
-    tft.print("Retry");
-  }*/
+      display_win_screen();
+      return;
+    }
 
   int xValue = analogRead(VRx);  // Read X-axis (left-right)
   int yValue = analogRead(VRy);  // Read Y-axis (up-down)
   bool buttonPressed = digitalRead(BUTTON);
 
   if (buttonPressed == LOW) {
+    if (is_playing == false) {
+      is_playing = true;
+      start_screen = false;
+      initialize();
+      return;
+    }
+
+    if (win_screen == true) {
+      win_screen = false;
+      initialize();
+      return;
+    }
+
+    if (lose_screen == true) {
+      you_lost = false;
+      lose_screen = false;
+      handleUndo();
+
+      display_undo_button();
+      return;
+    }
+
+    // just undo, undo button still on screen
     handleUndo();
     delay(300);
     return;
   }
 
-  if (abs(xValue - 512) > DEADZONE or abs(yValue - 512) > DEADZONE) {
+  if ((lose_screen == false and win_screen == false and start_screen == false) and (abs(xValue - 512) > DEADZONE or abs(yValue - 512) > DEADZONE)) {
     saveState();
 
     // Left / Right detection
@@ -308,7 +459,9 @@ void loop() {
     return;
   }
 
+  // Serial.println(isTouching);
   if (ts.touched()) {
+    // Serial.println("yes");
     if (!isTouching) {
       // Touch started
       start = ts.getPoint();
@@ -370,7 +523,9 @@ void Grid::swipeDown() {
     }
   }
 
-  this->addRandomTile();
+  
+  if (!(*this == last_grids[NO_UNDOS - 1]))
+    this->addRandomTile();
   this->draw();
 }
 
@@ -418,7 +573,9 @@ void Grid::swipeUp() {
     }
   }
 
-  this->addRandomTile();
+  
+  if (!(*this == last_grids[NO_UNDOS - 1]))
+    this->addRandomTile();
   this->draw();
 }
 
@@ -466,11 +623,15 @@ void Grid::swipeLeft() {
     }
   }
 
-  this->addRandomTile();
+  
+  if (!(*this == last_grids[NO_UNDOS - 1]))
+    this->addRandomTile();
   this->draw();
 }
 
 void Grid::swipeRight() {
+  Grid aux = Grid();
+
   for (int col = 0; col < GRID_LEN; col++) {
     // gravity
     int lin = GRID_LEN - 1;
@@ -514,7 +675,8 @@ void Grid::swipeRight() {
     }
   }
 
-  this->addRandomTile();
+  if (!(*this == last_grids[NO_UNDOS - 1]))
+    this->addRandomTile();
   this->draw();
 }
 
@@ -529,12 +691,26 @@ void Grid::addRandomTile() {
         idx++;
       }
 
+
   int pos = random(0, idx);
   int prob = random(0, 100);
   int val = 2;
   if (prob >= 80)
     val = 4;
   grid[pairs[pos][0]][pairs[pos][1]] = val;
+  if (idx == 1) {
+    bool possible = false;
+    for (int i = 0; i < GRID_LEN; i++)
+      for (int j = 0; j < GRID_LEN; j++) {
+        possible |= ((i > 0 and grid[i - 1][j] == grid[i][j]) or (j > 0 and grid[i][j - 1] == grid[i][j])
+                  or (i < GRID_LEN - 1 and grid[i + 1][j] == grid[i][j])
+                  or (j < GRID_LEN - 1 and grid[i][j + 1] == grid[i][j]));
+      }
+
+    if (not possible)
+      you_lost = true;
+    return;
+  }
 }
 
 void handleSwipe(TS_Point s, TS_Point e) {
@@ -548,16 +724,32 @@ void handleSwipe(TS_Point s, TS_Point e) {
   int dy = endY - startY;
   const int threshold = 10;  // Minimum movement to be a swipe
 
+  if (lose_screen == true and startX >= RETRY_X and startX <= RETRY_X + RETRY_W and startY >= RETRY_Y
+     and startY <= RETRY_Y + RETRY_H 
+      and dx <= threshold and dy <= threshold) {
+
+      you_lost = false;
+      lose_screen = false;
+      handleUndo();
+
+      display_undo_button();
+      return;
+    }
+
+  if (is_playing == false and startX >= RETRY_X and startX <= RETRY_X + RETRY_W and startY >= RETRY_Y
+     and startY <= RETRY_Y + RETRY_H 
+      and dx <= threshold and dy <= threshold) {
+
+      is_playing = true;
+      start_screen = false;
+      initialize();
+      return;
+    }
+
   if (win_screen and startX >= RETRY_X and startX <= RETRY_X + RETRY_W and startY >= RETRY_Y
      and startY <= RETRY_Y + RETRY_H 
       and dx <= threshold and dy <= threshold) {
 
-      score = 0;
-      grid = Grid();
-      for (int i = 0; i < NO_UNDOS; i++) {
-        last_score[i] = 0;
-        last_grids[i] = Grid();
-      }
       win_screen = false;
       initialize();
       delay(300);
@@ -570,6 +762,10 @@ void handleSwipe(TS_Point s, TS_Point e) {
       return;
     }
 
+  if (win_screen == true or start_screen == true or lose_screen == true)
+    return;
+
+  bool swipe = false;
   if (abs(dx) > abs(dy)) {
     if (abs(dx) > threshold) {
       saveState();
@@ -579,26 +775,24 @@ void handleSwipe(TS_Point s, TS_Point e) {
       } else {
         grid.swipeLeft();
       }
+
+      swipe = true;
     }
   } else {
     if (abs(dy) > threshold) {
-      for (int i = 0; i < NO_UNDOS - 1; i++) {
-        last_grids[i] = last_grids[i + 1];
-        last_score[i] = last_score[i + 1];
-      }
-
-      last_grids[NO_UNDOS - 1] = grid;
-      last_score[NO_UNDOS - 1] = score;
+      saveState();
 
       if (dy > 0) {
         grid.swipeDown();
       } else {
         grid.swipeUp();
       }
+
+      swipe = true;
     }
   }
 
-  if (grid.max_val == WIN_VALUE)
+  if (swipe and grid.max_val == WIN_VALUE)
     has_won = true;
 
   delay(300);  // Prevents rapid multiple detections
