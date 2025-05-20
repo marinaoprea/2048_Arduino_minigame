@@ -30,12 +30,12 @@ Any functionality of the game will be implemented both ways, either by interpret
 
 Components will be connected as shown in the block diagram:
 
-<img src="pm_block_scheme.png" style="height 400px; width: 780px;"/>
+<img src="hardware/pm_block_scheme.png" style="height 400px; width: 780px;"/>
 
 ## Hardware Design
 
 ### Electrical Scheme
-<img src="circuit_image.png" style="height 400px; width: 780px;"/>
+<img src="hardware/circuit_image.png" style="height 400px; width: 780px;"/>
 
 The screen uses 3.3V for logical high while Arduino UNO uses 5V as pin output. Voltage dividers were added to prevent screen damage.
 
@@ -86,10 +86,96 @@ Only the left joystick is used, so only a few pins are connected.
 
 ## Software Design
 
-## Results
+### External libraries used
+- `Adafruit_GFX.h`
+  - used for TFT display rendering (text, rectangles, fill background, etc)
+- `Adafruit_ILI9341.h`
+  - used for communicating with the TFT display over SPI
+- `XPT2046_Touchscreen`
+  - used for interfacing with the resistive touchscreen overlay
+- `EEPROM.h`
+  - used for accessing non-volatile memory in order to store the best score
+- `avr/sleep.h`
+  - used for delaying rapid changes in order to avoid overriding of actions
 
-## Conclusions
+### Code components
+Code splits itself into two main components:
+- **Interfacing with the hardware**, where the first three libraries above work as convenient wrappers. This includes:
+  - Functions that display menus
+  - Functions that display the grid
+  - Functions that interpret swipes or button pushes
+- **Keeping track internally of the current game state**, which includes:
+  - Updating code flags to keep track of game state (identifying current menu)
+  - Updating inner structures according to performed moves
+  - Updating inner structure of past moves and best score altogether
 
-## Timeline
+### Game flow
+1. A starting menu is displayed, and on button press, the game starts.
+2. While playing, possible moves are `LEFT`, `RIGHT`, `UP`, and `DOWN`, depending on the direction the grid changes.
+3. If a tile with value `2048` is reached, the game is considered won, and a win screen is displayed.
+   - Best score is updated if necessary, and a new game can be started on button push.
+4. If no more possible moves are available (grid is full and no tiles can coalesce anymore), the game is considered lost.
+   - Best score is updated, and a lose screen is displayed.
+   - However, the user can perform an `Undo`, which might allow continued play if a convenient tile is generated.
+5. At any point in the game, **3 undos** are possible. If more are requested, the state does not change.
+6. On every move, if the grid has changed, a new tile appears in a random position.
+   - If the grid **does not change**, **no tile** is added to avoid fake moves.
 
-## Bibliography
+### Implementation details
+- Value of new tiles is either `2` or `4`, but they are added with different probabilities:
+  - `2` appears in 8 out of 10 cases, while `4` appears otherwise.
+  - This ensures a longer game but may require more trials when performing an undo if the game was lost.
+- The `random()` function is used to generate both tile values and tile positions.
+  - Tile position is randomly chosen from the list of free positions.
+  - At game start, `randomSeed` is initialized with an analog value from a floating pin to avoid predictability.
+- The `XPT2046` does not return pixel coordinates of touch.
+  - Thus, remapping using `map` was needed to convert the scale from `(0, 4095)` to screen pixel dimensions.
+- For cleaner code, a `Grid` class was implemented as a wrapper over a simple 4x4 matrix.
+  - This way, the overloaded `==` operator and copy constructor made saving states for undos and performing undo moves easier.
+
+### Control options
+The user can choose to use **touchscreen** or **joystick**.
+
+- In the loop function, both variants are polled. Interrupts could not be used because the ISR function would have been too complex. Thus, a polling approach was chosen, considering that playing involves continuous moves.
+- On menu changes, two flags are implied:
+  - One that is set the first time the menu needs to be displayed.
+  - One that is set the whole time the menu is displayed.
+  - This implements **debouncing** and optimizes screen rendering operations.
+
+### Optimizations
+- As mentioned above, rerendering is avoided as much as possible.
+  - When the screen changes, tiles are rendered only if they have different values than before.
+- When rendering tiles, colors are chosen based on their value.
+  - To perform this efficiently, **ILI9341-provided colors** are stored in an array, and bitwise division is used to find `idx = log2(val)`.
+- `EEPROM.update` is used instead of `EEPROM.write` to preserve non-volatile memory lifetime.
+
+### Used labs
+- **Lab0: GPIO** - for joystick button
+- **Lab4: ADC**
+  - `Arduino` uses a 10-bit ADC to map analog read values from pins used for joystick's Vrx and Vry between 0 and 1023.
+  - `XPT2046` touchscreen controller uses a 12-bit ADC to convert measured voltage to a value between 0 - 4095.
+- **Lab5: SPI**
+  - SPI protocol is used to communicate with the display (both for rendering and getting touchscreen input).
+- **Lab1: USART**
+  - Used for debugging code.
+
+### Results
+[GitHub repository](https://github.com/marinaoprea/2048_Arduino_minigame)
+
+<img src="images/start_screen.png" style="height 400px; width: 780px;"/>
+
+<img src="images/win_screen.png" style="height 400px; width: 780px;"/>
+
+<img src="images/lose_screen.png" style="height 400px; width: 780px;"/>
+
+<img src="images/game_play.png" style="height 400px; width: 780px;"/>
+
+
+### Conclusions
+This project was a good opportunity to see how theoretical concepts work in real-life applications, helping create something entertaining.
+
+### Bibliography & Other materials
+- [Display interfacing](https://forum.arduino.cc/t/interfacing-arduino-with-ili9341-color-tft-display/1226327)
+- [Interrupts discussions](https://forum.arduino.cc/t/interrupts-and-tft/325116/35)
+- [Resistor color code calculator](https://www.digikey.com/en/resources/conversion-calculators/conversion-calculator-resistor-color-code)
+- [Arduino electrical scheme designer](https://app.cirkitdesigner.com/project)
