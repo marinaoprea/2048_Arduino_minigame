@@ -162,6 +162,8 @@ The user can choose to use **touchscreen** or **joystick**.
 ### Results
 [GitHub repository](https://github.com/marinaoprea/2048_Arduino_minigame)
 
+[Demo video](https://drive.google.com/file/d/1MYe3Vqu2S6hLiaHRXt_nY94sQPNRhBG9/view?usp=sharing)
+
 <img src="images/start_screen.png" style="height 400px; width: 780px;"/>
 
 <img src="images/win_screen.png" style="height 400px; width: 780px;"/>
